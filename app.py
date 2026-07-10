@@ -14,14 +14,8 @@ from agents.graph import analyze_ipo
 st.set_page_config(page_title="Indian IPO Analyzer", layout="wide")
 
 # ---------------------------------------------------------------- sidebar --
-st.sidebar.header("Your investor profile")
-demo_mode = st.sidebar.toggle(
-    "Use demo data",
-    value=False,
-    help="Live scraping can break if Chittorgarh's HTML changes, or may be "
-         "blocked in some environments. Toggle this on to explore the tool "
-         "end-to-end with sample IPOs while you dial in the live scraper.",
-)
+st.sidebar.header("Investor Profile")
+demo_mode = st.sidebar.toggle("Use demo data", value=False)
 
 investment_amount = st.sidebar.number_input(
     "Investment amount (INR)", min_value=1000, value=50000, step=1000
@@ -38,7 +32,7 @@ horizon = st.sidebar.radio(
         "long_term": "Long-term holding",
     }[x],
 )
-sme_comfortable = st.sidebar.checkbox("Comfortable with SME IPOs (lower liquidity)", value=False)
+sme_comfortable = st.sidebar.checkbox("Comfortable with SME IPOs", value=False)
 experience = st.sidebar.selectbox("IPO experience", ["first_time", "some", "experienced"])
 
 user_profile = {
@@ -51,50 +45,50 @@ user_profile = {
 
 # ------------------------------------------------------------------ main --
 st.title("Indian IPO Analyzer")
-st.caption("Multi-agent analysis of live and upcoming mainboard + SME IPOs, powered by Gemini + LangGraph.")
-
-
-@st.cache_data(ttl=900)
-def load_ipo_list():
-    return fetch_ipo_list()
-
 
 if demo_mode:
     ipo_list = DEMO_IPOS
 else:
-    with st.spinner("Fetching live IPO list from Chittorgarh..."):
-        ipo_list = load_ipo_list()
+    with st.spinner("Fetching live IPO list..."):
+        ipo_list = fetch_ipo_list()
     if not ipo_list:
         st.warning(
-            "Live IPO data could not be loaded. Chittorgarh may have changed "
-            "its HTML, or network access may be blocked in this environment. "
-            "Falling back to demo data. See README.md -> Troubleshooting "
-            "scraping for the selector update steps."
+            "Live IPO data could not be loaded. Falling back to demo data."
         )
         ipo_list = DEMO_IPOS
         demo_mode = True
 
-status_filter = st.multiselect("Status", [s.value for s in IPOStatus], default=["open", "upcoming"])
-category_filter = st.multiselect("Category", [c.value for c in IPOCategory], default=["mainboard", "sme"])
+# Place filters side by side
+filter_col1, filter_col2 = st.columns(2)
+with filter_col1:
+    status_filter = st.multiselect("Status", [s.value for s in IPOStatus], default=["open", "upcoming"])
+with filter_col2:
+    category_filter = st.multiselect("Category", [c.value for c in IPOCategory], default=["mainboard", "sme"])
 
 filtered = [ipo for ipo in ipo_list if ipo.status.value in status_filter and ipo.category.value in category_filter]
 
-if not filtered:
+# ------------------------------------------------------- Uniform Grid --
+if filtered:
+    cols_per_row = 3
+    for i in range(0, len(filtered), cols_per_row):
+        row_cols = st.columns(cols_per_row)
+        for j in range(cols_per_row):
+            if i + j < len(filtered):
+                ipo = filtered[i + j]
+                with row_cols[j]:
+                    with st.container(border=True, height=350):
+                        st.subheader(ipo.name, anchor=False)
+                        st.caption(f"{ipo.category.value.upper()} | {ipo.status.value.upper()}")
+                        st.divider()
+                        st.write(f"Price band: Rs {ipo.price_band_low}-{ipo.price_band_high}")
+                        st.write(f"Lot size: {ipo.lot_size}")
+                        st.write(f"Dates: {ipo.open_date} to {ipo.close_date}")
+                        
+                        if st.button("Analyze", key=f"analyze_{ipo.slug}", use_container_width=True):
+                            st.session_state["selected_slug"] = ipo.slug
+                            st.session_state["selected_ipo"] = ipo
+else:
     st.info("No IPOs match the current filters.")
-    st.stop()
-
-cols = st.columns(3)
-for i, ipo in enumerate(filtered):
-    with cols[i % 3]:
-        with st.container(border=True):
-            st.subheader(ipo.name)
-            st.caption(f"{ipo.category.value.upper()} - {ipo.status.value.upper()}")
-            st.write(f"**Price band:** Rs {ipo.price_band_low}-{ipo.price_band_high}")
-            st.write(f"**Lot size:** {ipo.lot_size}")
-            st.write(f"**Dates:** {ipo.open_date} to {ipo.close_date}")
-            if st.button("Analyze", key=f"analyze_{ipo.slug}"):
-                st.session_state["selected_slug"] = ipo.slug
-                st.session_state["selected_ipo"] = ipo
 
 # ------------------------------------------------------------- analysis --
 if "selected_ipo" in st.session_state:

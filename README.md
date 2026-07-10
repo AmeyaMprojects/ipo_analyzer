@@ -1,145 +1,150 @@
 # Indian IPO Analyzer
 
-A multi-agent tool that pulls live and upcoming Indian IPOs (mainboard +
-SME), computes real financial/valuation/sentiment metrics, and produces a
-personalized, *explained* suitability report — not just a buy/avoid call.
+A multi-agent tool that scrapes live and upcoming Indian IPOs (mainboard + SME), computes real financial and valuation metrics, and produces a **personalized, explained** suitability report — not just a buy/avoid call.
 
-Not financial advice. GMP, subscription data, and disclosed financials
-change quickly and this tool's scraper can go stale — always cross-check
-against the RHP/DRHP on SEBI/exchange sites before investing.
+Built with [LangGraph](https://github.com/langchain-ai/langgraph) for agent orchestration and [Gemini](https://ai.google.dev/) for the reasoning steps, on top of deterministic, unit-tested financial math.
+
+## Live demo at https://ipoanalyzer.streamlit.app/
+
+> ⚠️ **Not financial advice.** GMP, subscription figures, and disclosed financials change quickly and scraped data can go stale. Always cross-check against the RHP/DRHP on SEBI/exchange sites before investing.
+
+---
+
+## Why this exists
+
+Most IPO trackers show you numbers. Almost none explain *why* those numbers matter, or whether an IPO actually fits **your** risk profile versus someone else's. This project does both:
+
+- Pulls live IPO data instead of relying on a static/manual dataset
+- Runs the data through six specialist agents instead of one LLM call doing everything
+- Every LLM-generated claim is grounded in numbers computed by plain, testable Python — the model explains, it doesn't invent
+- The final verdict is personalized against your stated investment amount, risk appetite, horizon, and experience, not a generic "good IPO" score
+
+## Features
+
+-  **Live data** — scrapes Chittorgarh for the current IPO calendar, price bands, lot sizes, RHP financial disclosures, subscription figures, and grey market premium (GMP) trend
+-  **Real financial analysis** — P/E, P/B, ROE, ROCE, debt-to-equity, revenue CAGR, and profit margins, computed from disclosed financials
+-  **Multi-agent pipeline** — six specialist agents (data collection, fundamentals, valuation, sentiment, risk profiling, synthesis) instead of one LLM doing everything end-to-end
+-  **Personalized suitability** — matches IPO risk characteristics against your investment amount, risk appetite, horizon, and experience level
+-  **Explained, not just recommended** — every section of the report explains the mechanics behind the number, with an in-app metrics glossary
+-  **Offline demo mode** — explore the full UI and agent pipeline with sample data before wiring up live scraping or an API key
 
 ## Architecture
 
-```
-Streamlit UI (app.py)
-   |
-   v
-Data collector (scrapers/chittorgarh_scraper.py) -- no LLM, pure scraping
-   |
-   v
-LangGraph pipeline (agents/graph.py):
-
-    fundamentals            <- deterministic ratio math, no LLM
-        /      \
-  valuation   sentiment     <- valuation uses Gemini to explain; sentiment is pure math
-        \      /
-    risk_profile            <- deterministic score + Gemini explains it for THIS user
-          |
-     synthesizer            <- Gemini combines everything into the final report
+```mermaid
+flowchart TD
+    UI[Streamlit UI] --> DC[Data Collector<br/><i>scrapes Chittorgarh, no LLM</i>]
+    DC --> FUND[Fundamentals Agent<br/><i>ratio math, no LLM</i>]
+    FUND --> VAL[Valuation Agent<br/><i>Gemini explains pricing</i>]
+    FUND --> SENT[Sentiment Agent<br/><i>GMP + subscription score, no LLM</i>]
+    VAL --> RISK[Risk Profiling Agent<br/><i>Gemini, personalized to user</i>]
+    SENT --> RISK
+    PROFILE[User Risk Profile] --> RISK
+    RISK --> SYN[Synthesizer Agent<br/><i>Gemini writes final report</i>]
+    SYN --> UI
 ```
 
-Six specialist agents, five of which are graph nodes (data collection runs
-once, outside the graph, since it's I/O not reasoning):
+Only 3 of the 6 stages ever touch an LLM. Ratios, GMP math, and subscription scoring are pure, unit-tested arithmetic — Gemini's job is to *explain* numbers that code already computed, never to invent them. That means the report can't silently drift from the underlying data, and the verdict is reproducible given the same inputs.
 
-| Agent | LLM? | Job |
-|---|---|---|
-| Data collector | No | Scrapes Chittorgarh for IPO list, financials, GMP, subscription data |
-| Fundamentals | No | Computes P/E, P/B, ROE, ROCE, debt/equity, revenue CAGR, margins |
-| Valuation | Yes (Gemini) | Explains what the ratios mean; the rich/fair/attractive **verdict itself is rule-based code**, not LLM output |
-| Sentiment | No | Scores GMP trend + weighted QIB/NII/retail subscription momentum |
-| Risk profiling | Yes (Gemini) | Deterministic risk score from concrete red flags; Gemini explains which factors matter for *this* user's stated profile |
-| Synthesizer | Yes (Gemini) | Combines everything into the final report — explicitly instructed not to invent or override any upstream number |
+| Agent | Uses Gemini? | Responsibility |
+|---|:---:|---|
+| Data collector | ❌ | Scrapes IPO calendar, financials, GMP, subscription data from Chittorgarh |
+| Fundamentals | ❌ | Computes P/E, P/B, ROE, ROCE, debt/equity, revenue CAGR, margins |
+| Valuation | ✅ | Explains what the ratios mean; the rich/fair/attractive **verdict itself is rule-based**, not LLM output |
+| Sentiment | ❌ | Scores GMP trend + weighted QIB/NII/retail subscription momentum |
+| Risk profiling | ✅ | Deterministic risk score from concrete red flags; Gemini explains which factors matter for *your* profile |
+| Synthesizer | ✅ | Combines everything into the final report — instructed never to override upstream numbers |
 
-**Why so much of this is non-LLM by design:** ratios, GMP math, and
-subscription scoring are pure arithmetic. Making Gemini "explain" numbers
-that code already computed — rather than asking Gemini to produce the
-numbers itself — means the report can never silently drift from the
-underlying data, and every number is independently unit-testable
-(see `tests/test_financial_calcs.py`).
+## Tech stack
 
-## Setup
+| Layer | Choice |
+|---|---|
+| Orchestration | LangGraph (fan-out/fan-in multi-agent graph) |
+| LLM | Google Gemini via `langchain-google-genai` |
+| UI | Streamlit |
+| Data validation | Pydantic v2 |
+| Scraping | `requests` + `BeautifulSoup` |
+| Testing | `pytest` |
+
+## Getting started
+
+### Prerequisites
+- Python 3.10+
+- A free [Gemini API key](https://aistudio.google.com/apikey)
+
+### Installation
 
 ```bash
-cd ipo_analyzer
-python -m venv venv && source venv/bin/activate   # or your preferred env tool
+git clone https://github.com/<your-username>/ipo-analyzer.git
+cd ipo-analyzer
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env   # then add your GEMINI_API_KEY
 streamlit run app.py
 ```
 
-Toggle **"Use demo data"** in the sidebar to explore the whole pipeline
-(UI, agents, ratio math) immediately with three sample IPOs, without
-depending on live scraping working yet or spending Gemini API credits.
+Open the URL Streamlit prints (usually `http://localhost:8501`).
 
-## Troubleshooting scraping
+### Try it without any setup
 
-Chittorgarh (like any scraped site) changes its HTML periodically. All
-CSS selectors live in one place: `SELECTORS` at the top of
-`scrapers/chittorgarh_scraper.py`. If `fetch_ipo_list()` returns an empty
-list:
+Toggle **"Use demo data"** in the sidebar to explore the full UI and agent pipeline with three realistic sample IPOs — no scraping and no API key needed for the layout, though the Gemini-powered agents still need a key to actually run.
 
-1. Open `https://www.chittorgarh.com/ipo/ipo_list.asp` in your browser.
-2. Right-click the IPO table -> Inspect -> find the current table/row class.
-3. Update `SELECTORS["ipo_table_rows"]` (and the GMP/financials selectors
-   similarly, using their respective pages) to match.
+## Project structure
 
-The rest of the pipeline doesn't need to change when selectors do — only
-this dict.
+```
+ipo_analyzer/
+├── app.py                       Streamlit entry point
+├── state.py                     Shared LangGraph state schema
+├── agents/
+│   ├── graph.py                 LangGraph wiring (fan-out/fan-in pipeline)
+│   ├── fundamentals_agent.py    Deterministic ratio calculations
+│   ├── valuation_agent.py       Rule-based verdict + Gemini explanation
+│   ├── sentiment_agent.py       GMP + subscription scoring
+│   ├── risk_agent.py            Risk scoring + personalized explanation
+│   └── synthesizer_agent.py     Final report generation
+├── scrapers/
+│   ├── models.py                Pydantic schemas for all IPO data
+│   ├── chittorgarh_scraper.py   Live data source
+│   └── demo_data.py             Offline sample data
+├── utils/
+│   ├── financial_calcs.py       Pure, unit-tested ratio math
+│   └── gemini_client.py         LLM wrapper + response normalization
+└── tests/
+    └── test_financial_calcs.py  9 unit tests, no network required
+```
 
-**Not yet implemented:** direct NSE/BSE API scraping. NSE in particular
-requires session-cookie bootstrapping and aggressively rate-limits/blocks
-scripted access, which needs more hardening than fits here. Chittorgarh
-aggregates NSE + BSE mainboard and SME data already, so it's the
-practical single source for now; NSE/BSE direct integration is a natural
-next step if you want official-source cross-verification.
+## Metric glossary
 
-## Metric glossary (also shown in-app, per your requirement to explain the mechanics)
+<details>
+<summary>Click to expand — also shown inline in the app</summary>
 
-- **P/E (Price-to-Earnings)** — price paid per rupee of annual profit.
-  Only meaningful vs. sector peers.
-- **P/B (Price-to-Book)** — price vs. net asset value per share. Matters
-  more for asset-heavy businesses (banks, manufacturing) than asset-light
-  ones (SaaS, services).
-- **ROE (Return on Equity)** — profit per rupee of shareholder capital.
-  \>15% is generally healthy for Indian mainboard companies, sector-dependent.
-- **ROCE (Return on Capital Employed)** — profitability vs. *all* capital
-  (equity + debt) — fairer than ROE for leveraged companies.
-- **Debt-to-Equity** — >1 means the company owes more than shareholders
-  invested; higher financial risk.
+- **P/E (Price-to-Earnings)** — price paid per rupee of annual profit. Only meaningful compared against sector peers.
+- **P/B (Price-to-Book)** — price vs. net asset value per share. Matters more for asset-heavy businesses (banks, manufacturing) than asset-light ones (SaaS, services).
+- **ROE (Return on Equity)** — profit per rupee of shareholder capital. >15% is generally healthy for Indian mainboard companies, sector-dependent.
+- **ROCE (Return on Capital Employed)** — profitability vs. *all* capital (equity + debt) — fairer than ROE for leveraged companies.
+- **Debt-to-Equity** — >1 means the company owes more than shareholders invested; higher financial risk.
 - **Revenue CAGR** — compound annual growth rate across disclosed fiscal years.
-- **GMP (Grey Market Premium)** — an unofficial, unregulated secondary
-  indicator of listing-day demand, traded outside SEBI's purview. It's a
-  sentiment signal, not a valuation input, and can swing sharply or
-  vanish before listing.
-- **Subscription multiple (QIB/NII/Retail)** — how many times a category
-  was subscribed. QIB (institutional) demand is weighted highest in this
-  tool's sentiment score since QIBs typically do the deepest diligence.
+- **GMP (Grey Market Premium)** — an unofficial, unregulated secondary indicator of listing-day demand, traded outside SEBI's purview. Treated as a sentiment signal here, never a valuation input, since it can swing sharply or vanish before listing.
+- **Subscription multiple (QIB/NII/Retail)** — how many times a category was subscribed. QIB (institutional) demand is weighted highest in this tool's sentiment score, since QIBs typically do the deepest diligence.
 
-## Project layout
+</details>
 
-```
-app.py                       Streamlit entry point
-state.py                     Shared LangGraph state schema
-agents/
-  graph.py                   LangGraph wiring (fan-out/fan-in pipeline)
-  fundamentals_agent.py
-  valuation_agent.py
-  sentiment_agent.py
-  risk_agent.py
-  synthesizer_agent.py
-scrapers/
-  models.py                  Pydantic schemas for all IPO data
-  chittorgarh_scraper.py     Live data source
-  demo_data.py                Offline sample data for development
-utils/
-  financial_calcs.py         Pure, unit-tested ratio math
-  gemini_client.py           LLM wrapper + typed-content-block handling
-tests/
-  test_financial_calcs.py    9 unit tests, all passing, no network needed
-```
+## Known limitations
 
-## Extending this
+- **Scraping is fragile by nature.** Chittorgarh's HTML can change at any time. All CSS selectors live in one place (`SELECTORS` in `scrapers/chittorgarh_scraper.py`) so a break is usually a one-line fix — see the Troubleshooting section in that file's docstring.
+- **NSE/BSE direct integration isn't implemented.** NSE in particular requires session-cookie bootstrapping and aggressively rate-limits scripted access. Chittorgarh already aggregates NSE + BSE mainboard and SME data, so it's the practical single source for now.
+- **GMP is not a valuation signal.** It's included because it's genuinely useful for gauging listing-day sentiment, but the app is explicit that it's unregulated and can vanish before listing.
 
-- **SME kostak-rate tracking**: `GMPRecord.kostak_rate` is already in the
-  schema; wire it up once you've confirmed the selector on Chittorgarh's
-  SME GMP page.
-- **Anchor investor quality scoring**: `anchor_investors` is collected but
-  not yet scored — a good next agent, weighting known large institutional
-  names higher.
-- **Sector peer P/E benchmarks**: currently the valuation agent only
-  reasons over the single IPO's ratios. Scraping a small table of
-  sector-median P/E (e.g. from screener.in) and passing it into
-  `valuation_node` would make the rich/fair/cheap verdict sector-relative
-  instead of using fixed thresholds.
-- **NSE/BSE direct scraping** as an official-source cross-check (see
-  Troubleshooting above).
+## Roadmap
+
+- [ ] Sector-relative valuation (scrape peer P/E medians instead of using fixed thresholds)
+- [ ] Anchor investor quality scoring
+- [ ] SME kostak-rate tracking (schema already supports it)
+- [ ] NSE/BSE direct scraping as an official-source cross-check
+
+## Disclaimer
+
+This tool is for educational purposes only and does not constitute investment advice. IPO investing carries risk, including loss of capital. The author is not a SEBI-registered investment advisor. Always do your own research and consult a qualified financial advisor before investing.
+
+## License
+
+[MIT](LICENSE)
